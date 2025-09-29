@@ -1,23 +1,4 @@
-// CSS animations for buzzer ready state
-        function addBuzzerReadyAnimation() {
-            if (!document.querySelector('#buzzerReadyStyle')) {
-                const style = document.createElement('style');
-                style.id = 'buzzerReadyStyle';
-                style.textContent = `
-                    @keyframes buzzerReady {
-                        from { 
-                            box-shadow: 0 10px 30px rgba(255, 107, 107, 0.4);
-                            transform: scale(1);
-                        }
-                        to { 
-                            box-shadow: 0 20px 50px rgba(255, 215, 0, 0.8);
-                            transform: scale(1.02);
-                        }
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-        }<?php
+<?php
 require_once 'config.php';
 
 // ログインチェック
@@ -676,6 +657,27 @@ $choices = json_decode($question['choices'], true);
             startTimer();
             updatePlayerDisplay();
         }
+
+        // CSS animations for buzzer ready state
+        function addBuzzerReadyAnimation() {
+            if (!document.querySelector('#buzzerReadyStyle')) {
+                const style = document.createElement('style');
+                style.id = 'buzzerReadyStyle';
+                style.textContent = `
+                    @keyframes buzzerReady {
+                        from { 
+                            box-shadow: 0 10px 30px rgba(255, 107, 107, 0.4);
+                            transform: scale(1);
+                        }
+                        to { 
+                            box-shadow: 0 20px 50px rgba(255, 215, 0, 0.8);
+                            transform: scale(1.02);
+                        }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
         
         // 問題文段階的表示
         function startQuestionReveal() {
@@ -729,58 +731,276 @@ $choices = json_decode($question['choices'], true);
         }
         
         // 早押しボタン
-        function pressBuzzer() {
-            if (!gameData.canBuzz || gameData.hasBuzzed || gameData.hasAnswered) return;
+        async function pressBuzzer() {
+    if (!gameData.canBuzz || gameData.hasBuzzed || gameData.hasAnswered) return;
+    
+    try {
+        const data = await callApi('buzz', {
+            room_id: gameData.roomId,
+            question_id: gameData.questionId
+        });
+        
+        if (data.success) {
+            handleBuzzerSuccess();
+        }
+    } catch (error) {
+        console.error('早押し処理中にエラーが発生しました:', error);
+    }
+}
+        
+        // selectChoice関数の修正版
+async function selectChoice(choiceIndex) {
+    if (!gameData.hasBuzzed || gameData.hasAnswered) return;
+    
+    try {
+        gameData.hasAnswered = true;
+        clearInterval(timerInterval);
+        
+        const selectedButton = document.querySelector(`[data-choice="${choiceIndex}"]`);
+        selectedButton.classList.add('selected');
+        
+        disableAllChoices();
+        
+        const data = await callApi('answer', {
+            room_id: gameData.roomId,
+            question_id: gameData.questionId,
+            choice: choiceIndex
+        });
+        
+        handleAnswerResult(data, choiceIndex);
+    } catch (error) {
+        console.error('回答の処理中にエラーが発生しました:', error);
+        gameData.hasAnswered = false;
+        enableAllChoices();
+    }
+}
+
+// API通信の共通関数
+async function callApi(action, data = {}) {
+    try {
+        const formData = new FormData();
+        formData.append('action', action);
+        for (const [key, value] of Object.entries(data)) {
+            formData.append(key, value);
+        }
+
+        const response = await fetch('multiplayer_api.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error || 'Unknown error');
+        }
+
+        return result;
+    } catch (error) {
+        console.error(`API Error (${action}):`, error);
+        throw error;
+    }
+}
+
+// プレイヤーのスコアを更新する補助関数
+function updatePlayerScore(userId, scoreChange) {
+    const playerCard = document.querySelector(`.player-card[data-user-id="${userId}"]`);
+    if (playerCard) {
+        const scoreElement = playerCard.querySelector('.player-score');
+        const currentScore = parseInt(scoreElement.textContent.match(/\d+/)[0]);
+        const newScore = currentScore + parseInt(scoreChange);
+        scoreElement.textContent = `💰 ${newScore}pt`;
+    }
+}
+
+// プレイヤーの早押し状態を更新する補助関数
+function updatePlayerBuzzerStatus(userId) {
+    // 全てのプレイヤーカードから早押し状態を解除
+    document.querySelectorAll('.player-card').forEach(card => {
+        card.classList.remove('buzzer-holder');
+    });
+    
+    // 早押しした人のカードに早押し状態を追加
+    const buzzerCard = document.querySelector(`.player-card[data-user-id="${userId}"]`);
+    if (buzzerCard) {
+        buzzerCard.classList.add('buzzer-holder');
+    }
+}
             
-            gameData.hasBuzzed = true;
-            gameData.canBuzz = false;
-            clearInterval(revealInterval);
+                // 結果表示
+        function showResult(choiceIndex) {
+            const resultDisplay = document.getElementById('resultDisplay');
+            const resultMessage = document.getElementById('resultMessage');
+            const isCorrect = choiceIndex === gameData.correctAnswer;
             
-            // 視覚的フィードバック
-            const buzzerBtn = document.getElementById('buzzerBtn');
-            buzzerBtn.disabled = true;
-            buzzerBtn.style.background = 'linear-gradient(145deg, #666, #444)';
-            buzzerBtn.style.animation = 'none';
+            // 正解・不正解の表示スタイル設定
+            resultMessage.className = isCorrect ? 'result-message correct' : 'result-message incorrect';
+            resultMessage.innerHTML = isCorrect ? 
+                '🎊 正解！ +' + CORRECT_SCORE + 'pt' : 
+                '❌ 不正解... ' + INCORRECT_PENALTY + 'pt';
             
-            // 早押し成功表示
-            document.getElementById('buzzer-status').innerHTML = 
-                '<span style="color: #90ee90;">🎯 早押し成功！選択肢を選んでください</span>';
+            // 選択肢のスタイル更新
+            const choiceBtns = document.querySelectorAll('.choice-btn');
+            choiceBtns.forEach((btn, index) => {
+                if (index === choiceIndex) {
+                    btn.classList.add(isCorrect ? 'correct' : 'incorrect');
+                }
+                if (index === gameData.correctAnswer && !isCorrect) {
+                    btn.classList.add('correct');
+                }
+            });
             
-            // 問題文を全表示
-            document.getElementById('questionText').textContent = gameData.questionText;
-            document.getElementById('revealProgress').style.width = '100%';
+            // 結果画面表示
+            resultDisplay.classList.add('show');
             
-            // 選択肢を表示
-            document.getElementById('choicesContainer').classList.add('active');
-            
-            // 自分が早押し成功したことを表示
-            updatePlayerBuzzerStatus(gameData.userId);
-            
-            // サーバーに早押し送信
+            // サーバーに回答を送信
             fetch('multiplayer_api.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `action=buzz&room_id=${gameData.roomId}&question_id=${gameData.questionId}&user_id=${gameData.userId}`
+                body: `action=answer&room_id=${gameData.roomId}&question_id=${gameData.questionId}&choice=${choiceIndex}`
             });
         }
         
-        // 選択肢選択
-        function selectChoice(choiceIndex) {
-            if (!gameData.hasBuzzed || gameData.hasAnswered) return;
+        // タイムアウト処理
+        function timeUp() {
+            if (!gameData.hasBuzzed) {
+                document.getElementById('buzzer-status').innerHTML = 
+                    '<span style="color: #ff6347;">⏰ 時間切れ</span>';
+                
+                // サーバーにタイムアウトを通知
+                fetch('multiplayer_api.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `action=timeout&room_id=${gameData.roomId}&question_id=${gameData.questionId}`
+                });
+                
+                // 次の問題へのボタンを表示
+                showNextQuestionButton();
+            }
+        }
+        
+        // 次の問題へ
+        function nextQuestion() {
+            // ホストユーザーのみが次の問題に進める
+            if (gameData.userId === <?= $room['host_user_id'] ?>) {
+                fetch('multiplayer_api.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `action=next_question&room_id=${gameData.roomId}`
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.game_finished) {
+                            window.location.href = 'multiplayer_result.php';
+                        } else {
+                            window.location.reload();
+                        }
+                    }
+                });
+            }
+        }
+        
+        // プレイヤー表示の更新
+        async function updatePlayerDisplay() {
+    try {
+        const data = await callApi('get_players', {
+            room_id: gameData.roomId
+        });
+        
+        const playersContainer = document.getElementById('playersContainer');
+        playersContainer.innerHTML = data.players.map(player => `
+            <div class="player-card ${player.id == gameData.userId ? 'current-user' : ''}" 
+                 data-user-id="${player.id}">
+                <div class="player-name">${player.name}</div>
+                <div class="player-score">💰 ${player.score}pt</div>
+                <div class="player-status">⭐</div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('プレイヤー情報の更新に失敗しました:', error);
+    }
+}
+
+// ゲーム状態の更新
+async function updateGameState() {
+    try {
+        const data = await callApi('get_game_state', {
+            room_id: gameData.roomId
+        });
+        
+        handleGameStateUpdate(data.game_state, data.question);
+    } catch (error) {
+        console.error('ゲーム状態の更新に失敗しました:', error);
+    }
+}
+        
+        // ゲーム状態の変更を処理
+        function handleGameStateUpdate(gameState, question) {
+            if (gameState.buzzer_user_id && !gameData.hasBuzzed) {
+                // 他のプレイヤーが早押しした場合
+                clearInterval(revealInterval);
+                document.getElementById('questionText').textContent = question.question;
+                document.getElementById('revealProgress').style.width = '100%';
+                document.getElementById('buzzerBtn').disabled = true;
+                
+                // 早押しプレイヤーを表示
+                updatePlayerBuzzerStatus(gameState.buzzer_user_id);
+            }
             
-            gameData.hasAnswered = true;
-            clearInterval(timerInterval);
+            // ゲーム状態に応じたUI更新
+            switch (gameState.status) {
+                case 'answered':
+                case 'timeout':
+                    if (gameData.userId === <?= $room['host_user_id'] ?>) {
+                        showNextQuestionButton();
+                    }
+                    break;
+            }
+        }
+        
+        // 早押しプレイヤーのステータス表示
+        function updatePlayerBuzzerStatus(buzzerId) {
+            document.querySelectorAll('.player-card').forEach(card => {
+                card.classList.remove('buzzer-holder');
+                if (card.dataset.userId == buzzerId) {
+                    card.classList.add('buzzer-holder');
+                }
+            });
+        }
+        
+        // 次の問題ボタンの表示
+        function showNextQuestionButton() {
+            const resultDisplay = document.getElementById('resultDisplay');
+            const resultMessage = document.getElementById('resultMessage');
+            resultMessage.textContent = '次の問題へ進みましょう！';
+            resultDisplay.classList.add('show');
+        }
+        
+        // イベントリスナーの設定
+        document.addEventListener('DOMContentLoaded', () => {
+            // 早押しボタンのイベントリスナー
+            document.getElementById('buzzerBtn').addEventListener('click', pressBuzzer);
             
-            // 選択した選択肢をハイライト
-            document.querySelector(`[data-choice="${choiceIndex}"]`).classList.add('selected');
+            // 選択肢ボタンのイベントリスナー
+            document.querySelectorAll('.choice-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (!gameData.hasAnswered && gameData.hasBuzzed) {
+                        selectChoice(parseInt(btn.dataset.choice));
+                    }
+                });
+            });
             
-            // 全選択肢を無効化
-            const choiceBtns = document.querySelectorAll('.choice-btn');
-            choiceBtns.forEach(btn => btn.disabled = true);
+            // アニメーション用のスタイル追加
+            addBuzzerReadyAnimation();
             
-            // 結果表示
-            setTimeout(() => {
-                showResult(choiceIndex);
-            }, 1000);
-            
-            //
+            // ゲーム初期化
+            initializeGame();
+            updateGameState();
+        });
+        </script>
+</body>
+</html>
