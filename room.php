@@ -616,6 +616,16 @@ foreach ($participants as $participant) {
                     </div>
                 <?php endforeach; ?>
             </div>
+
+$difficulty_form = '
+<div class="form-group">
+    <label>難易度を選択</label>
+    <select name="difficulty" required>
+        <option value="beginner">初級</option>
+        <option value="intermediate">中級</option>
+        <option value="advanced">上級</option>
+    </select>
+</div>';
             
             <div class="game-rules">
                 <h3>🏺 古代の掟</h3>
