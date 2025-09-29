@@ -736,12 +736,26 @@ $choices = json_decode($question['choices'], true);
     
     try {
         const data = await callApi('buzz', {
-            room_id: gameData.roomId,
             question_id: gameData.questionId
         });
         
         if (data.success) {
-            handleBuzzerSuccess();
+            gameData.hasBuzzed = true;
+            gameData.canBuzz = false;
+            clearInterval(revealInterval);
+            
+            const buzzerBtn = document.getElementById('buzzerBtn');
+            buzzerBtn.disabled = true;
+            buzzerBtn.style.animation = 'none';
+            
+            document.getElementById('buzzer-status').innerHTML = 
+                '<span style="color: #90ee90;">🎯 早押し成功！選択肢を選んでください</span>';
+            
+            document.getElementById('questionText').textContent = gameData.questionText;
+            document.getElementById('revealProgress').style.width = '100%';
+            document.getElementById('choicesContainer').classList.add('active');
+            
+            updatePlayerBuzzerStatus(gameData.userId);
         }
     } catch (error) {
         console.error('早押し処理中にエラーが発生しました:', error);
@@ -759,7 +773,8 @@ async function selectChoice(choiceIndex) {
         const selectedButton = document.querySelector(`[data-choice="${choiceIndex}"]`);
         selectedButton.classList.add('selected');
         
-        disableAllChoices();
+        // 全ての選択肢を無効化
+        document.querySelectorAll('.choice-btn').forEach(btn => btn.disabled = true);
         
         const data = await callApi('answer', {
             room_id: gameData.roomId,
@@ -767,11 +782,33 @@ async function selectChoice(choiceIndex) {
             choice: choiceIndex
         });
         
-        handleAnswerResult(data, choiceIndex);
+        if (data.success) {
+            const isCorrect = data.is_correct;
+            
+            // 選択肢の視覚的フィードバック
+            selectedButton.classList.add(isCorrect ? 'correct' : 'incorrect');
+            if (!isCorrect) {
+                document.querySelector(`[data-choice="${gameData.correctAnswer}"]`).classList.add('correct');
+            }
+            
+            // スコア更新とメッセージ表示
+            updatePlayerScore(gameData.userId, data.score_change);
+            
+            // 結果表示
+            const resultMessage = document.getElementById('resultMessage');
+            resultMessage.textContent = isCorrect ? 
+                `🎉 正解！ +${data.score_change}点` :
+                `😢 不正解... ${data.score_change}点`;
+            resultMessage.className = `result-message ${isCorrect ? 'correct' : 'incorrect'}`;
+            
+            // 結果画面を表示
+            document.getElementById('resultDisplay').classList.add('show');
+        }
     } catch (error) {
         console.error('回答の処理中にエラーが発生しました:', error);
         gameData.hasAnswered = false;
-        enableAllChoices();
+        document.querySelectorAll('.choice-btn').forEach(btn => btn.disabled = false);
+        selectedButton.classList.remove('selected');
     }
 }
 
@@ -780,12 +817,16 @@ async function callApi(action, data = {}) {
     try {
         const formData = new FormData();
         formData.append('action', action);
+        // 必須パラメータの追加
+        formData.append('room_id', gameData.roomId);
+        
+        // 追加のデータをformDataに追加
         for (const [key, value] of Object.entries(data)) {
             formData.append(key, value);
         }
 
         const response = await fetch('multiplayer_api.php', {
-            method: 'POST',
+            method: 'POST', // GETではなくPOSTを使用
             body: formData
         });
 
@@ -907,19 +948,19 @@ function updatePlayerBuzzerStatus(userId) {
         // プレイヤー表示の更新
         async function updatePlayerDisplay() {
     try {
-        const data = await callApi('get_players', {
-            room_id: gameData.roomId
-        });
+        const data = await callApi('get_players');
         
-        const playersContainer = document.getElementById('playersContainer');
-        playersContainer.innerHTML = data.players.map(player => `
-            <div class="player-card ${player.id == gameData.userId ? 'current-user' : ''}" 
-                 data-user-id="${player.id}">
-                <div class="player-name">${player.name}</div>
-                <div class="player-score">💰 ${player.score}pt</div>
-                <div class="player-status">⭐</div>
-            </div>
-        `).join('');
+        if (data.success && data.players) {
+            const playersContainer = document.getElementById('playersContainer');
+            playersContainer.innerHTML = data.players.map(player => `
+                <div class="player-card ${player.id == gameData.userId ? 'current-user' : ''}" 
+                     data-user-id="${player.id}">
+                    <div class="player-name">${player.name}</div>
+                    <div class="player-score">💰 ${player.score}pt</div>
+                    <div class="player-status">⭐</div>
+                </div>
+            `).join('');
+        }
     } catch (error) {
         console.error('プレイヤー情報の更新に失敗しました:', error);
     }
@@ -928,10 +969,7 @@ function updatePlayerBuzzerStatus(userId) {
 // ゲーム状態の更新
 async function updateGameState() {
     try {
-        const data = await callApi('get_game_state', {
-            room_id: gameData.roomId
-        });
-        
+        const data = await callApi('get_game_state');
         handleGameStateUpdate(data.game_state, data.question);
     } catch (error) {
         console.error('ゲーム状態の更新に失敗しました:', error);
@@ -1001,6 +1039,12 @@ async function updateGameState() {
             initializeGame();
             updateGameState();
         });
+        // インターバルの設定
+const updateInterval = 2000; // 2秒ごとに更新
+setInterval(async () => {
+    await updateGameState();
+    await updatePlayerDisplay();
+}, updateInterval);
         </script>
 </body>
 </html>
