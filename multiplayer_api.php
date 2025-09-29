@@ -203,23 +203,27 @@ try {
             break;
             
         case 'get_game_state':
-            // ゲーム状態取得
-            $stmt = $pdo->prepare("SELECT * FROM game_states WHERE room_id = ? ORDER BY id DESC LIMIT 1");
-            $stmt->execute([$room_id]);
-            $game_state = $stmt->fetch();
-            
-            if ($game_state) {
-                $stmt = $pdo->prepare("SELECT * FROM questions WHERE id = ?");
-                $stmt->execute([$game_state['question_id']]);
-                $question = $stmt->fetch();
-                
-                $response['success'] = true;
-                $response['game_state'] = $game_state;
-                $response['question'] = $question;
-            } else {
-                throw new Exception('No game state found');
+    // 現在のゲーム状態を取得
+    $stmt = $pdo->prepare("
+        SELECT gs.*, q.level
+        FROM game_states gs
+        JOIN questions q ON gs.question_id = q.id
+        WHERE gs.room_id = ?
+        ORDER BY gs.id DESC LIMIT 1
+    ");
+    $stmt->execute([$room_id]);
+    $state = $stmt->fetch();
+    
+    $response = [
+        'success' => true,
+              'state' => $state,
+                'newQuestion' => false
+         ];
+    
+            if ($state['status'] === 'completed' && time() - strtotime($state['updated_at']) > 5) {
+                $response['newQuestion'] = true;
             }
-            break;
+        break;
             
         case 'leave_room':
             // ルーム退出処理
