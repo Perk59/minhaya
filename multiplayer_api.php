@@ -203,27 +203,23 @@ try {
             break;
             
         case 'get_game_state':
-    // 現在のゲーム状態を取得
-    $stmt = $pdo->prepare("
-        SELECT gs.*, q.level
-        FROM game_states gs
-        JOIN questions q ON gs.question_id = q.id
-        WHERE gs.room_id = ?
-        ORDER BY gs.id DESC LIMIT 1
-    ");
-    $stmt->execute([$room_id]);
-    $state = $stmt->fetch();
-    
-    $response = [
-        'success' => true,
-              'state' => $state,
-                'newQuestion' => false
-         ];
-    
-            if ($state['status'] === 'completed' && time() - strtotime($state['updated_at']) > 5) {
-                $response['newQuestion'] = true;
+            // ゲーム状態取得
+            $stmt = $pdo->prepare("SELECT * FROM game_states WHERE room_id = ? ORDER BY id DESC LIMIT 1");
+            $stmt->execute([$room_id]);
+            $game_state = $stmt->fetch();
+            
+            if ($game_state) {
+                $stmt = $pdo->prepare("SELECT * FROM questions WHERE id = ?");
+                $stmt->execute([$game_state['question_id']]);
+                $question = $stmt->fetch();
+                
+                $response['success'] = true;
+                $response['game_state'] = $game_state;
+                $response['question'] = $question;
+            } else {
+                throw new Exception('No game state found');
             }
-        break;
+            break;
             
         case 'leave_room':
             // ルーム退出処理
@@ -266,6 +262,100 @@ try {
             $response['success'] = true;
             $response['room_status'] = $status;
             break;
+
+        case 'get_answer_choices':
+    $question_id = intval($_POST['question_id']);
+    $position = intval($_POST['position']);
+    
+    // 該当位置の選択肢を取得
+    $stmt = $pdo->prepare("
+        SELECT qc.correct_char, qc.dummy_chars
+        FROM question_characters qc
+        WHERE qc.question_id = ? AND qc.position = ?
+    ");
+    $stmt->execute([$question_id, $position]);
+    $choices = $stmt->fetch();
+    
+    if (!$choices) {
+        throw new Exception('No choices found');
+    }
+    
+    // ダミー文字と正解を混ぜてシャッフル
+    $all_choices = array_merge([$choices['correct_char']], json_decode($choices['dummy_chars'], true));
+    shuffle($all_choices);
+    
+    $response['success'] = true;
+    $response['choices'] = $all_choices;
+    $response['position'] = $position;
+    break;
+
+    case 'check_answer':
+    $question_id = intval($_POST['question_id']);
+    $position = intval($_POST['position']);
+    $selected_char = $_POST['selected_char'];
+    
+    // 正解を取得
+    $stmt = $pdo->prepare("
+        SELECT correct_char 
+        FROM question_characters 
+        WHERE question_id = ? AND position = ?
+    ");
+    $stmt->execute([$question_id, $position]);
+    $correct = $stmt->fetch();
+    
+    $is_correct = ($correct['correct_char'] === $selected_char);
+    
+    // 回答を記録
+    $stmt = $pdo->prepare("
+        INSERT INTO answer_history 
+        (user_id, question_id, position, selected_char, is_correct)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+    $stmt->execute([$user_id, $question_id, $position, $selected_char, $is_correct]);
+    
+    if (!$is_correct) {
+        // 不正解の場合、ゲーム状態を更新
+        $stmt = $pdo->prepare("UPDATE game_states SET status = 'answered', winner_id = NULL WHERE room_id = ? AND question_id = ?");
+        $stmt->execute([$room_id, $question_id]);
+    } else if ($position === strlen($question['answer_text']) - 1) {
+        // 最後の文字まで正解した場合
+        $stmt = $pdo->prepare("UPDATE game_states SET status = 'answered', winner_id = ? WHERE room_id = ? AND question_id = ?");
+        $stmt->execute([$user_id, $room_id, $question_id]);
+    }
+    
+    $response['success'] = true;
+    $response['is_correct'] = $is_correct;
+    break;
+
+    case 'update_game_state':
+    $current_time = time();
+    
+    // 現在のゲーム状態を取得
+    $stmt = $pdo->prepare("
+        SELECT *, UNIX_TIMESTAMP(last_update) as last_update_ts
+        FROM game_states 
+        WHERE room_id = ? 
+        ORDER BY id DESC LIMIT 1
+    ");
+    $stmt->execute([$room_id]);
+    $state = $stmt->fetch();
+    
+    // 状態に応じた自動更新
+    if ($state['status'] === 'answered' && ($current_time - $state['last_update_ts']) > 5) {
+        // 5秒後に自動で次の問題へ
+        $next_question = getNextQuestion($room_id);
+        if ($next_question) {
+            updateGameState($room_id, $next_question['id'], 'revealing');
+            $response['new_question'] = true;
+        } else {
+            finishGame($room_id);
+            $response['game_finished'] = true;
+        }
+    }
+    
+    $response['success'] = true;
+    $response['state'] = $state;
+    break;
             
         default:
             throw new Exception('Invalid action');
