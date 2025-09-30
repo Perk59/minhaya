@@ -570,6 +570,7 @@ $choices = json_decode($question['choices'], true);
             }
         }
     </style>
+    <link rel="stylesheet" href="assets/css/multiplayer_game.css">
 </head>
 <body>
     <div class="game-container">
@@ -976,29 +977,72 @@ async function updateGameState() {
     }
 }
         
-        // ゲーム状態の変更を処理
-        function handleGameStateUpdate(gameState, question) {
-            if (gameState.buzzer_user_id && !gameData.hasBuzzed) {
-                // 他のプレイヤーが早押しした場合
-                clearInterval(revealInterval);
-                document.getElementById('questionText').textContent = question.question;
-                document.getElementById('revealProgress').style.width = '100%';
-                document.getElementById('buzzerBtn').disabled = true;
-                
-                // 早押しプレイヤーを表示
-                updatePlayerBuzzerStatus(gameState.buzzer_user_id);
+        // 回答モーダルのHTML
+const answerModal = `
+<div id="answerModal" class="modal">
+    <div class="modal-content">
+        <h2>回答</h2>
+        <div id="answerProgress"></div>
+        <div id="characterChoices" class="character-choices"></div>
+        <div id="currentAnswer" class="current-answer"></div>
+    </div>
+</div>
+`;
+
+// 他プレイヤー回答中モーダルのHTML
+const otherPlayerModal = `
+<div id="otherPlayerModal" class="modal">
+    <div class="modal-content">
+        <h2><span id="answeringPlayer"></span>が回答中...</h2>
+        <div id="otherPlayerProgress"></div>
+    </div>
+</div>
+`;
+
+// 回答処理
+async function handleAnswer(questionId) {
+    const answer_text = gameData.currentQuestion.answer_text;
+    let currentPosition = 0;
+    
+    while (currentPosition < answer_text.length) {
+        try {
+            const choices = await getAnswerChoices(questionId, currentPosition);
+            const selectedChar = await showCharacterChoices(choices);
+            const result = await checkAnswer(questionId, currentPosition, selectedChar);
+            
+            if (!result.is_correct) {
+                showIncorrectAnswer();
+                break;
             }
             
-            // ゲーム状態に応じたUI更新
-            switch (gameState.status) {
-                case 'answered':
-                case 'timeout':
-                    if (gameData.userId === <?= $room['host_user_id'] ?>) {
-                        showNextQuestionButton();
-                    }
-                    break;
+            updateAnswerProgress(currentPosition + 1, answer_text.length);
+            currentPosition++;
+            
+            if (currentPosition === answer_text.length) {
+                showCorrectAnswer();
             }
+        } catch (error) {
+            console.error('回答処理中にエラーが発生:', error);
+            break;
         }
+    }
+}
+
+// ゲーム状態の更新処理を改善
+function handleGameStateUpdate(state) {
+    if (state.status === 'answering' && state.answering_user_id !== gameData.userId) {
+        showOtherPlayerAnswering(state.answering_user_name);
+    } else if (state.status === 'answered') {
+        hideOtherPlayerAnswering();
+        if (state.winner_id) {
+            showWinner(state.winner_id);
+        }
+        // 5秒後に自動で次の問題へ
+        setTimeout(() => {
+            updateGameState();
+        }, 5000);
+    }
+}
         
         // 早押しプレイヤーのステータス表示
         function updatePlayerBuzzerStatus(buzzerId) {
@@ -1046,5 +1090,6 @@ setInterval(async () => {
     await updatePlayerDisplay();
 }, updateInterval);
         </script>
+
 </body>
 </html>
